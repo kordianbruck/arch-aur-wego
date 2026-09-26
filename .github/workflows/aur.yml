@@ -1,0 +1,80 @@
+name: AUR
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: aur-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          source PKGBUILD
+          pacman -Syu --noconfirm --needed namcap "${depends[@]}" "${makedepends[@]}"
+
+      - name: Prepare build user
+        run: |
+          useradd -m builder
+          chown -R builder: "$GITHUB_WORKSPACE"
+
+      - name: Check .SRCINFO is up to date
+        run: |
+          su builder -c 'makepkg --printsrcinfo' > /tmp/SRCINFO
+          diff -u .SRCINFO /tmp/SRCINFO || {
+            echo "::error::.SRCINFO is outdated, run: makepkg --printsrcinfo > .SRCINFO"
+            exit 1
+          }
+
+      - name: Build package
+        run: su builder -c 'makepkg --noconfirm --cleanbuild'
+
+      - name: Lint
+        run: namcap PKGBUILD *.pkg.tar.*
+
+      - name: Smoke test
+        run: |
+          pacman -U --noconfirm ./*.pkg.tar.*
+          wego --man >/dev/null
+
+  publish:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure SSH for AUR
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          if [ -z "$AUR_SSH_PRIVATE_KEY" ]; then
+            echo "::error::AUR_SSH_PRIVATE_KEY secret is not set"
+            exit 1
+          fi
+          install -dm700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
+          cat >> ~/.ssh/config <<'CFG'
+          Host aur.archlinux.org
+            User aur
+            IdentityFile ~/.ssh/aur
+            IdentitiesOnly yes
+          CFG
+
+      - name: Push to AUR
+        run: |
+          git remote add aur ssh://aur@aur.archlinux.org/wego.git
+          git push aur HEAD:master
