@@ -79,5 +79,41 @@ jobs:
 
       - name: Push to AUR
         run: |
-          git remote add aur ssh://aur@aur.archlinux.org/wego.git
-          git push aur HEAD:master
+          AUR_DIR="$(mktemp -d)"
+          git clone ssh://aur@aur.archlinux.org/wego.git "$AUR_DIR"
+
+          COMMIT_MSG_FILE="$(mktemp)"
+          git log -1 --format=%B > "$COMMIT_MSG_FILE"
+          if [ ! -s "$COMMIT_MSG_FILE" ]; then
+            echo "Update package" > "$COMMIT_MSG_FILE"
+          fi
+
+          AUTHOR_NAME="$(git log -1 --format='%an')"
+          AUTHOR_EMAIL="$(git log -1 --format='%ae')"
+          AUTHOR_NAME="${AUTHOR_NAME:-github-actions[bot]}"
+          AUTHOR_EMAIL="${AUTHOR_EMAIL:-github-actions[bot]@users.noreply.github.com}"
+
+          # Sync packaging files to AUR directory (excluding GitHub workflows, git metadata, and repo docs)
+          find "$AUR_DIR" -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} +
+          mapfile -t files < <(git ls-files | grep -v -E '^(\.github/|\.gitignore$|README\.md$)')
+          for file in "${files[@]}"; do
+            if [[ "$file" == *"/"* ]]; then
+              echo "::error::AUR packages cannot contain subdirectories: $file"
+              exit 1
+            fi
+            cp "$file" "$AUR_DIR/"
+          done
+
+          cd "$AUR_DIR"
+
+          git config user.name "$AUTHOR_NAME"
+          git config user.email "$AUTHOR_EMAIL"
+          git add -A
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit to AUR."
+            exit 0
+          fi
+
+          git commit -F "$COMMIT_MSG_FILE"
+          git push origin master

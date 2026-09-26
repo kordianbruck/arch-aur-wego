@@ -6,3 +6,6 @@
 *.tar.xz
 *.tar
 *.log
+
+# SSH keys
+aur_*
