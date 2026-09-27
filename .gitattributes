@@ -1,0 +1,9 @@
+# Files marked export-ignore exist only on GitHub and are not published to the AUR.
+# The AUR rejects subdirectories, so anything in a folder must be listed here.
+.gitattributes export-ignore
+.gitignore export-ignore
+.github export-ignore
+.claude export-ignore
+AGENTS.md export-ignore
+CLAUDE.md export-ignore
+README.md export-ignore
